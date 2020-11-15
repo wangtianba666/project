@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<projectDescription>
+	<name>design_1_wrapper_hw_platform_0_Traces</name>
+	<comment></comment>
+	<projects>
+	</projects>
+	<buildSpec>
+	</buildSpec>
+	<natures>
+		<nature>org.eclipse.linuxtools.tmf.project.nature</nature>
+	</natures>
+	<linkedResources>
+		<link>
+			<name>Traces/Run_十一月-15_09-22/PS_Trace_十一月-15_09-22/PS_Trace_十一月-15_09-22_</name>
+			<type>1</type>
+			<location>C:/Users/dell/Desktop/Matrix_DynamicSpot/Matrix_DynamicSpot/Matrix_DynamicSpot.sdk/design_1_wrapper_hw_platform_0_Traces/Traces/.bookmarks</location>
+		</link>
+	</linkedResources>
+</projectDescription>

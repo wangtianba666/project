@@ -1,0 +1,37 @@
+{
+   "ExpandedHierarchyInLayout":"",
+   "guistr":"# # String gsaved with Nlview 7.0.19  2019-03-26 bk=1.5019 VDI=41 GEI=35 GUI=JA:9.0 non-TLS
+#  -string -flagsOSRD
+preplace port DDR -pg 1 -lvl 5 -x 1530 -y -170 -defaultsOSRD
+preplace port FIXED_IO -pg 1 -lvl 5 -x 1530 -y -150 -defaultsOSRD
+preplace port pwm_1_v_0 -pg 1 -lvl 5 -x 1530 -y 20 -defaultsOSRD
+preplace port pwm_1_h_0 -pg 1 -lvl 5 -x 1530 -y 40 -defaultsOSRD
+preplace port pwm_2_v_0 -pg 1 -lvl 5 -x 1530 -y 60 -defaultsOSRD
+preplace port pwm_2_h_0 -pg 1 -lvl 5 -x 1530 -y 80 -defaultsOSRD
+preplace port pwm_3_h_0 -pg 1 -lvl 5 -x 1530 -y 120 -defaultsOSRD
+preplace port pwm_3_v_0 -pg 1 -lvl 5 -x 1530 -y 100 -defaultsOSRD
+preplace inst processing_system7_0 -pg 1 -lvl 1 -x 220 -y -110 -defaultsOSRD
+preplace inst ps7_0_axi_periph -pg 1 -lvl 3 -x 1020 -y -140 -defaultsOSRD
+preplace inst rst_ps7_0_50M -pg 1 -lvl 2 -x 650 -y 240 -defaultsOSRD
+preplace inst ServoControl_3_0 -pg 1 -lvl 4 -x 1380 -y 70 -defaultsOSRD
+preplace netloc processing_system7_0_FCLK_CLK0 1 0 4 0 0 430 30 850 70 N
+preplace netloc processing_system7_0_FCLK_RESET0_N 1 1 1 420 -60n
+preplace netloc rst_ps7_0_50M_peripheral_aresetn 1 2 2 860 90 N
+preplace netloc ServoControl_3_0_pwm_1_v 1 4 1 N 20
+preplace netloc ServoControl_3_0_pwm_1_h 1 4 1 N 40
+preplace netloc ServoControl_3_0_pwm_2_v 1 4 1 N 60
+preplace netloc ServoControl_3_0_pwm_2_h 1 4 1 N 80
+preplace netloc ServoControl_3_0_pwm_3_h 1 4 1 NJ 120
+preplace netloc ServoControl_3_0_pwm_3_v 1 4 1 NJ 100
+preplace netloc processing_system7_0_M_AXI_GP0 1 1 2 NJ -100 840J
+preplace netloc processing_system7_0_DDR 1 1 4 NJ -160 820 -270 1180 -170 N
+preplace netloc processing_system7_0_FIXED_IO 1 1 4 NJ -140 830 -260 1170 -150 N
+preplace netloc ps7_0_axi_periph_M00_AXI 1 3 1 1180 -140n
+levelinfo -pg 1 -20 220 650 1020 1380 1530
+pagesize -pg 1 -db -bbox -sgen -20 -380 1660 760
+"
+}
+{
+   "da_axi4_cnt":"4",
+   "da_ps7_cnt":"1"
+}

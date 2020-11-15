@@ -1,0 +1,6 @@
+//arch = zynq; split = false; format = BIN
+the_ROM_image:
+{
+	C:\Users\dell\Desktop\Matrix_DynamicSpot\Matrix_DynamicSpot\Matrix_DynamicSpot.sdk\design_1_wrapper_hw_platform_0\design_1_wrapper.bit
+	C:\Users\dell\Desktop\Matrix_DynamicSpot\Matrix_DynamicSpot\Matrix_DynamicSpot.sdk\Matrix_DynamicSpot\Debug\Matrix_DynamicSpot.elf
+}

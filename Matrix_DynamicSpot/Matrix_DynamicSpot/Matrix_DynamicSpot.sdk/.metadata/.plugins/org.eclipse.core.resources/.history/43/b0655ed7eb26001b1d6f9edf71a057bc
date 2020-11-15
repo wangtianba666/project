@@ -1,0 +1,559 @@
+/******************************************************************************
+*	Filename: helloworld.c[Unchecked]
+*				   Matrix-DynamicSpot Project Application
+* 	Copyright (C) 2020  University of ShangHai for Science and Technology.
+* 						    All rights reserved.
+*
+*	LEDs	PS(MIO):MIO0,MIO13
+*	ps7_uart    115200 (configured by bootrom/bsp)
+******************************************************************************/
+/***************************** Include Files *********************************/
+#include <stdio.h>
+#include <math.h>
+
+#include "platform.h"
+#include "xil_printf.h"
+
+#include "sleep.h"
+#include "xparameters.h"
+#include "xgpiops.h"
+#include "xstatus.h"
+#include "xplatform_info.h"
+
+#include "xscugic.h"
+#include "uart_parameter.h"
+
+#include "xadcps.h"
+
+#include "ServoControl_3.h"
+
+
+/************************** Constant Definitions ****************************/
+#ifndef GPIO_DEVICE_ID
+#define GPIO_DEVICE_ID		XPAR_XGPIOPS_0_DEVICE_ID
+#endif
+
+#ifndef BOOLEAN
+#define BOOLEAN _Bool
+#endif
+
+#define UART_DEVICE_ID      XPAR_XUARTPS_0_DEVICE_ID
+#define INTC_DEVICE_ID		XPAR_SCUGIC_SINGLE_DEVICE_ID
+#define UART_INT_IRQ_ID		XPAR_XUARTPS_1_INTR
+
+#define UART_TX      0     // Statement
+#define UART_RXCHECK 1
+#define UART_WAIT    2
+#define MAX_LEN      200   // Maximum receiver length
+
+#define ADC_DEVICE_ID     XPAR_PS7_XADC_0_DEVICE_ID
+
+#define Servoleft_V    1   // left vertical control servo
+#define Servoleft_H    2   // left vertical control servo
+#define Servomiddle_V  3
+#define Servomiddle_H  4
+#define Servoright_V   5
+#define Servoright_H   6
+
+#define Lightdis    120     // the distance between center light and the wall(cm)
+#define PLOEdis     35      // the distance of pole
+#define PPIdis      0.259
+
+#define PI  3.14159265
+
+
+
+/************************** Variable Definitions **************************/
+XGpioPs Gpio;				 /* The driver instance for GPIO Device. */
+
+XUartPs Uart_PS;		     /* Instance of the UART Device */
+XScuGic IntcInstPtr;
+
+u8 ReceivedBuffer[MAX_LEN];  /* UART receiver buffer */
+u8 *ReceivedBufferPtr;       /* UART receiver buffer pointer*/
+volatile u32 ReceivedByteNum;/* UART receiver byte number */
+volatile u32 ReceivedFlag;
+
+u8 SystemMode;        /* 1:Mouse trace; 2: Image tracking*/
+BOOLEAN LEDstate;
+u32 LEDCount1;  // To realize the led blink without sleep().
+
+XAdcPs XAdc;
+
+/************************* Function declaration ***************************/
+int UartPsSend(XUartPs *InstancePtr, u8 *BufferPtr, u32 NumBytes);
+int UartPsRev (XUartPs *InstancePtr, u8 *BufferPtr, u32 NumBytes);
+
+int SetupInterruptSystem(XScuGic *IntcInstancePtr,	XUartPs *UartInstancePtr, u16 UartIntrId);
+void Handler(void *CallBackRef);
+
+char * float2str(float val, int precision, char *buf);
+
+void ServoControl(u8 ServoNum,float duty);
+
+double* Axisfunction(double array[]);
+
+
+int main()
+{
+    init_platform();
+
+    print("Welcome to Use the Matrix-DynamicSpot\n\r");
+    print("University of ShangHai for Science and Technology\n\r");
+    /* 1-Initialize the LED GPIO driver. */
+    int Status,i;
+    XGpioPs_Config *ConfigPtr;
+    ConfigPtr = XGpioPs_LookupConfig(GPIO_DEVICE_ID);
+    Status = XGpioPs_CfgInitialize(&Gpio, ConfigPtr, ConfigPtr->BaseAddr);
+    if (Status != XST_SUCCESS) {
+    	return XST_FAILURE;
+    }
+	XGpioPs_SetDirectionPin(&Gpio, 0, 1);    // Set the direction for the pin to be output and
+	XGpioPs_SetDirectionPin(&Gpio, 13, 1);
+	XGpioPs_SetOutputEnablePin(&Gpio, 0, 1); // Enable the Output enable for the LED Pin
+	XGpioPs_SetOutputEnablePin(&Gpio, 13, 1);
+
+
+	/* 2-Initialize the UART Driver */
+	XUartPs_Config *Config;
+	u32 SendByteNum;
+	u8 *SendBufferPtr;
+	u8 state = UART_RXCHECK;                // Received the data first default.
+	ReceivedBufferPtr = ReceivedBuffer;
+	ReceivedFlag = 0;
+	ReceivedByteNum = 0;
+
+	Config = XUartPs_LookupConfig(UART_DEVICE_ID);
+	if (NULL == Config) {
+		return XST_FAILURE;
+	}
+	Status = XUartPs_CfgInitialize(&Uart_PS, Config, Config->BaseAddress);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+	XUartPs_SetOperMode(&Uart_PS, XUARTPS_OPER_MODE_NORMAL); // Use Normal mode.
+	XUartPs_SetDataFormat(&Uart_PS, &UartFormat);            // Set uart mode Baud Rate 115200, 8bits, no parity, 1 stop bit.
+	XUartPs_SetFifoThreshold(&Uart_PS,45);                    // Set receiver FIFO interrupt trigger level, here set to 45.
+	/* Enable the receive FIFO trigger level interrupt and empty interrupt for the device */
+	XUartPs_SetInterruptMask(&Uart_PS,XUARTPS_IXR_RXOVR|XUARTPS_IXR_RXEMPTY);
+	SetupInterruptSystem(&IntcInstPtr, &Uart_PS, UART_INT_IRQ_ID);
+
+	/* 3-Initialize the XADC */
+    XAdcPs_Config *XadcConfig;
+
+    XadcConfig = XAdcPs_LookupConfig(ADC_DEVICE_ID);
+    Status = XAdcPs_CfgInitialize(&XAdc, XadcConfig, XadcConfig->BaseAddress);
+	if (Status != XST_SUCCESS)
+		return XST_FAILURE;
+
+
+	for(i=0;i<3;i++){   // LEDs blink to show the systems start to work.
+		XGpioPs_WritePin(&Gpio, 0, 0x0);
+		XGpioPs_WritePin(&Gpio, 13, 0x0);usleep(500000);// Set the GPIO outputs low.
+		XGpioPs_WritePin(&Gpio, 0, 0x1);
+		XGpioPs_WritePin(&Gpio, 13, 0x1);usleep(500000);// Set the GPIO outputs high.
+	}
+
+	SystemMode = 0;    // Set mode value 0 first.
+	LEDstate = 0;
+	LEDCount1 = 5000000;
+
+	int OpticCoordiX;  // To save Optic center coordinate.
+	int Last_OpticCoordiX;
+
+	int OpticCoordiY;  // To save Optic center coordinate.
+	int Last_OpticCoordiY;  // To save Last Optic center coordinate.
+
+	int MouseCoordiX;  // To save Mouse coordinate.
+	int MouseCoordiY;  // To save Mouse coordinate.
+	u8 LED1Enable,LED2Enable;
+
+    u16 raw_data;
+    float Temp;
+    float vccint;
+    float vccaux;
+    u8 datastr[128];
+
+    double middle_V_duty1 = 0.07;
+    double middle_H_duty1 = 0.05;
+    double middle_V_duty2 = 0.07;
+    double middle_H_duty2 = 0.05;
+    double middle_V_duty3 = 0.07;
+    double middle_H_duty3 = 0.05;
+
+	/* 3-Main Function Loop Body */
+	while(1){
+//		switch(state){
+//			case UART_RXCHECK:    /* Check receiver flag, send received data */
+//			{
+//				if (ReceivedFlag){
+//					/* Reset receiver pointer, flag, byte number */
+//					ReceivedFlag = 0;
+//					ReceivedBufferPtr = ReceivedBuffer;
+//
+//					SystemMode = ReceivedBuffer[0]; // save the current control mode.
+//					if(SystemMode == 0x01) {LED1Enable = 1;LED2Enable = 0;}
+//					if(SystemMode == 0x02) {LED1Enable = 0;LED2Enable = 1;}
+//
+//					Last_OpticCoordiX = (ReceivedBuffer[1]<<8) | ReceivedBuffer[2];  // regroup the right data.
+//					if(Last_OpticCoordiX - OpticCoordiX >= 0x05 || OpticCoordiX - Last_OpticCoordiX >= 0x05)
+//					{
+//						OpticCoordiX = Last_OpticCoordiX;
+//					}
+//
+//					Last_OpticCoordiY = (ReceivedBuffer[3]<<8) | ReceivedBuffer[4];
+//					if(Last_OpticCoordiY - OpticCoordiY >= 0x05 || OpticCoordiY - Last_OpticCoordiY >= 0x05)
+//					{
+//						OpticCoordiY = Last_OpticCoordiY;
+//					}
+//
+//					MouseCoordiX = (ReceivedBuffer[5]<<8) | ReceivedBuffer[6];
+//					MouseCoordiY = (ReceivedBuffer[7]<<8) | ReceivedBuffer[8];
+//					ReceivedByteNum = 0;
+//
+//					state = UART_TX;     // send the board data when start to control the servo.
+//
+//
+//				}
+//				break;
+//			}
+//			case UART_TX:          /* Received PC data and transfer the board data back. */
+//			{
+//		//				raw_data = XAdcPs_GetAdcData(&XAdc, XADCPS_CH_TEMP);
+//		//				Temp = XAdcPs_RawToTemperature(raw_data);               // SoC Temperature
+//		//				raw_data = XAdcPs_GetAdcData(&XAdc, XADCPS_CH_VCCINT);
+//		//				vccint = XAdcPs_RawToVoltage(raw_data);                 // VCCINT
+//		//				raw_data = XAdcPs_GetAdcData(&XAdc, XADCPS_CH_VCCAUX);
+//		//				vccaux = XAdcPs_RawToVoltage(raw_data);                 // VCCAUX
+//
+//		//				datastr = {"50.51C50.51C50.51C"};
+////				sprintf(datastr,"%.2fC%.2fV%.2fV", Temp, vccint, vccaux);  // 16 Bytes
+//				sprintf(datastr,"OX:%3d,OY:%3d,MX:%3d,MY:%3d", OpticCoordiX, OpticCoordiY, MouseCoordiX, MouseCoordiY);
+////				SendBufferPtr = TxData;// load the board temperature, voltage and 3 servo's angle.
+////				SendByteNum = sizeof(TxData);
+//				SendBufferPtr = datastr;// load the board temperature, voltage and 3 servo's angle.
+//				SendByteNum = 27;
+//				UartPsSend(&Uart_PS, SendBufferPtr, SendByteNum);
+//				state = UART_RXCHECK;
+//				break;
+//			}
+//
+////					case UART_WAIT:		/* Wait for 1s */
+////					{
+////						sleep(1) ;
+////						state = UART_TX;break;
+////					}
+//			default: break;
+//		}
+//
+//
+//		/* Blink the LED according to the System mode */
+//		if (LEDCount1 == 1){
+//			LEDstate = !LEDstate;
+//			if(LED1Enable){
+//				XGpioPs_WritePin(&Gpio, 13, 0x1);
+//				XGpioPs_WritePin(&Gpio, 0, LEDstate);
+////				SERVOCONTROL_3_mWriteReg(BaseAddress, RegOffset, Data)// set servo angle 45
+//			}
+//			if(LED2Enable){
+//				XGpioPs_WritePin(&Gpio, 13, LEDstate);
+//				XGpioPs_WritePin(&Gpio, 0, 0x1);
+////				SERVOCONTROL_3_mWriteReg(BaseAddress, RegOffset, Data)// set servo angle 135
+//			}
+//		}
+//
+//		LEDCount1--;
+//		if(LEDCount1 == 0) LEDCount1 = 5000000;
+
+//		MouseCoordiX = 160;MouseCoordiY = 120;
+//		double axisdata[4] = { PLOEdis , Lightdis , MouseCoordiX, MouseCoordiY};
+//		double *angledata; double arr_output[6];
+//		angledata = Axisfunction(axisdata);
+//		arr_output[0] = *angledata;
+//		arr_output[1] = *(angledata+1);
+//		arr_output[2] = *(angledata+2);
+//		arr_output[3] = *(angledata+3);
+//		arr_output[4] = *(angledata+4);
+//		arr_output[5] = *(angledata+5);
+
+		if (ReceivedFlag){
+			/* Reset receiver pointer, flag, byte number */
+			ReceivedFlag = 0;
+			ReceivedBufferPtr = ReceivedBuffer;
+
+			SystemMode = ReceivedBuffer[0]; // save the current control mode.
+			if(SystemMode == 0x01) {LED1Enable = 1;LED2Enable = 0;}
+			if(SystemMode == 0x02) {LED1Enable = 0;LED2Enable = 1;}
+
+			Last_OpticCoordiX = (ReceivedBuffer[1]<<8) | ReceivedBuffer[2];  // regroup the right data.
+			if(Last_OpticCoordiX - OpticCoordiX >= 0x05 || OpticCoordiX - Last_OpticCoordiX >= 0x05)
+			{
+				OpticCoordiX = Last_OpticCoordiX;
+			}
+
+			Last_OpticCoordiY = (ReceivedBuffer[3]<<8) | ReceivedBuffer[4];
+			if(Last_OpticCoordiY - OpticCoordiY >= 0x05 || OpticCoordiY - Last_OpticCoordiY >= 0x05)
+			{
+				OpticCoordiY = Last_OpticCoordiY;
+			}
+
+			MouseCoordiX = (ReceivedBuffer[5]<<8) | ReceivedBuffer[6];
+			MouseCoordiY = (ReceivedBuffer[7]<<8) | ReceivedBuffer[8];
+			ReceivedByteNum = 0;
+
+			state = UART_TX;     // send the board data when start to control the servo.
+
+
+		}
+
+
+		if(MouseCoordiX<150){
+			middle_V_duty1 = 0.09;middle_H_duty1 = 0.08;// V:0.07-0.1(81-135) ;H 0.05-0.1(45-135)
+			middle_V_duty2 = 0.087;middle_H_duty2 = 0.083;// V:0.07-0.1(81-135) ;H 0.05-0.1(45-135)
+			middle_V_duty3 = 0.087;middle_H_duty3 = 0.090;// V:0.07-0.1(81-135) ;H 0.05-0.1(45-135)
+		}
+		if(MouseCoordiX>450){
+			middle_V_duty1 = 0.087;middle_H_duty1 = 0.065;// V:0.07-0.1(81-135) ;H 0.05-0.1(45-135)
+			middle_V_duty2 = 0.087;middle_H_duty2 = 0.067;// V:0.07-0.1(81-135) ;H 0.05-0.1(45-135)
+			middle_V_duty3 = 0.088;middle_H_duty3 = 0.075;// V:0.07-0.1(81-135) ;H 0.05-0.1(45-135)
+		}
+		if((MouseCoordiX>200)&&(MouseCoordiX<400)){
+			middle_V_duty1 = 0.08;middle_H_duty1 = 0.071;// V:0.07-0.1(81-135) ;H 0.05-0.1(45-135)
+			middle_V_duty2 = 0.079;middle_H_duty2 = 0.076;// V:0.07-0.1(81-135) ;H 0.05-0.1(45-135)
+			middle_V_duty3 = 0.08;middle_H_duty3 = 0.083;// V:0.07-0.1(81-135) ;H 0.05-0.1(45-135)
+		}
+
+		ServoControl(Servoleft_H,middle_H_duty1);
+		ServoControl(Servoleft_V,middle_V_duty1);
+
+		ServoControl(Servomiddle_H,middle_H_duty2);
+		ServoControl(Servomiddle_V,middle_V_duty2);
+
+		ServoControl(Servoright_H,middle_H_duty3);
+		ServoControl(Servoright_V,middle_V_duty3);
+
+		usleep(500000);
+
+		// Receive the uart data with loop.
+		// Blink PS-LED0 when work under Mode1,
+	}
+
+    cleanup_platform();
+    return 0;
+}
+
+
+/************************* Function Definitions ***************************/
+int SetupInterruptSystem(XScuGic *IntcInstancePtr,	XUartPs *UartInstancePtr, u16 UartIntrId)
+{
+	int Status;
+	/* Configuration for interrupt controller */
+	XScuGic_Config *IntcConfig;
+
+	/* Initialize the interrupt controller driver */
+	IntcConfig = XScuGic_LookupConfig(INTC_DEVICE_ID);
+	if (NULL == IntcConfig) {
+		return XST_FAILURE;
+	}
+
+	Status = XScuGic_CfgInitialize(IntcInstancePtr, IntcConfig, IntcConfig->CpuBaseAddress);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+
+	/*
+	 * Connect the interrupt controller interrupt handler to the
+	 * hardware interrupt handling logic in the processor.
+	 */
+	Xil_ExceptionRegisterHandler(XIL_EXCEPTION_ID_INT,
+			(Xil_ExceptionHandler) XScuGic_InterruptHandler, IntcInstancePtr);
+
+
+	Status = XScuGic_Connect(IntcInstancePtr, UartIntrId,
+			(Xil_ExceptionHandler) Handler, (void *) UartInstancePtr);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+
+	XScuGic_Enable(IntcInstancePtr, UartIntrId);
+	Xil_ExceptionEnable();
+
+	return Status ;
+}
+
+
+void Handler(void *CallBackRef)
+{
+	XUartPs *UartInstancePtr = (XUartPs *) CallBackRef ;
+	u32 ReceivedCount = 0 ;
+	u32 UartSrValue ;
+
+	UartSrValue = XUartPs_ReadReg(UartInstancePtr->Config.BaseAddress, XUARTPS_SR_OFFSET) & (XUARTPS_IXR_RXOVR|XUARTPS_IXR_RXEMPTY);
+	ReceivedFlag = 0 ;
+
+	if (UartSrValue & XUARTPS_IXR_RXOVR)   /* check if receiver FIFO trigger */
+	{
+		ReceivedCount = UartPsRev(&Uart_PS, ReceivedBufferPtr, MAX_LEN) ;
+		ReceivedByteNum += ReceivedCount ;
+		ReceivedBufferPtr += ReceivedCount ;
+		/* clear trigger interrupt */
+		XUartPs_WriteReg(UartInstancePtr->Config.BaseAddress, XUARTPS_ISR_OFFSET, XUARTPS_IXR_RXOVR) ;
+	}
+	else if (UartSrValue & XUARTPS_IXR_RXEMPTY)       /*check if receiver FIFO empty */
+	{
+		/* clear empty interrupt */
+		XUartPs_WriteReg(UartInstancePtr->Config.BaseAddress, XUARTPS_ISR_OFFSET, XUARTPS_IXR_RXEMPTY) ;
+		ReceivedFlag = 1 ;
+	}
+
+}
+
+
+int UartPsSend(XUartPs *InstancePtr, u8 *BufferPtr, u32 NumBytes)
+{
+	u32 SentCount = 0U;
+	/* Setup the buffer parameters */
+	InstancePtr->SendBuffer.RequestedBytes = NumBytes;
+	InstancePtr->SendBuffer.RemainingBytes = NumBytes;
+	InstancePtr->SendBuffer.NextBytePtr = BufferPtr;
+	while (InstancePtr->SendBuffer.RemainingBytes > SentCount)
+	{
+		/* Fill the FIFO from the buffer */
+		if (!XUartPs_IsTransmitFull(InstancePtr->Config.BaseAddress))
+		{
+			XUartPs_WriteReg(InstancePtr->Config.BaseAddress,
+					XUARTPS_FIFO_OFFSET,
+					((u32)InstancePtr->SendBuffer.
+							NextBytePtr[SentCount]));
+
+			/* Increment the send count. */
+			SentCount++;
+		}
+	}
+	/* Update the buffer to reflect the bytes that were sent from it */
+	InstancePtr->SendBuffer.NextBytePtr += SentCount;
+	InstancePtr->SendBuffer.RemainingBytes -= SentCount;
+	return SentCount;
+}
+
+
+int UartPsRev(XUartPs *InstancePtr, u8 *BufferPtr, u32 NumBytes)
+{
+	u32 ReceivedCount = 0;
+	u32 CsrRegister;
+	/* Setup the buffer parameters */
+	InstancePtr->ReceiveBuffer.RequestedBytes = NumBytes;
+	InstancePtr->ReceiveBuffer.RemainingBytes = NumBytes;
+	InstancePtr->ReceiveBuffer.NextBytePtr = BufferPtr;
+
+	/* Read the Channel Status Register to determine if there is any data in the RX FIFO */
+	CsrRegister = XUartPs_ReadReg(InstancePtr->Config.BaseAddress, XUARTPS_SR_OFFSET);
+
+	/* Loop until there is no more data in RX FIFO or the specified number of bytes has been received */
+	while((ReceivedCount < InstancePtr->ReceiveBuffer.RemainingBytes)&&(((CsrRegister & XUARTPS_SR_RXEMPTY) == (u32)0))){
+		InstancePtr->ReceiveBuffer.NextBytePtr[ReceivedCount] = XUartPs_ReadReg(InstancePtr->Config.BaseAddress,XUARTPS_FIFO_OFFSET);
+		ReceivedCount++;
+		CsrRegister = XUartPs_ReadReg(InstancePtr->Config.BaseAddress, XUARTPS_SR_OFFSET);
+	}
+	InstancePtr->is_rxbs_error = 0;
+	/* Update the receive buffer to reflect the number of bytes just received */
+	if(InstancePtr->ReceiveBuffer.NextBytePtr != NULL){
+		InstancePtr->ReceiveBuffer.NextBytePtr += ReceivedCount;
+	}
+	InstancePtr->ReceiveBuffer.RemainingBytes -= ReceivedCount;
+	return ReceivedCount;
+}
+
+
+void ServoControl(u8 ServoNum,float duty)
+{
+    u32 period = 4294;        // 20ms, period = freq(servo_pwm)*(2^N)/freq(sysclk);
+    u32 dutyPWM;
+    dutyPWM =(u32)(pow(2,32)*(1-duty)-1);
+
+    switch(ServoNum){
+    	case Servoleft_V:{// servo 1 Mapping H15	 PLIO
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG0_OFFSET, period);// plat1 servo-V period
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG1_OFFSET, dutyPWM);// plat1 servo-V duty
+    	}break;
+    	case Servoleft_H:{// servo 2  Mapping K14 PLIO
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG2_OFFSET, period);// plat1 servo-H period
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG3_OFFSET, dutyPWM);// plat1 servo-H duty
+    	}break;
+    	case Servomiddle_V:{// servo 3 Mapping G17 PLIO
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG4_OFFSET, period);// plat2 servo-V period
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG5_OFFSET, dutyPWM);// plat2 servo-V duty
+    	}break;
+    	case Servomiddle_H:{// servo 4 Mapping H16 PLIO
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG6_OFFSET, period);// plat2 servo-H period
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG7_OFFSET, dutyPWM);// plat2 servo-H duty
+    	}break;
+    	case Servoright_V:{// servo 5 Mapping D19 PLIO
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG8_OFFSET, period); // plat3 servo-V period
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG9_OFFSET, dutyPWM); // plat3 servo-V duty
+    	}break;
+    	case Servoright_H:{// servo 6 Mapping E18 PLIO
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG10_OFFSET, period);// plat3 servo-H period
+    	    SERVOCONTROL_3_mWriteReg(XPAR_SERVOCONTROL_3_0_S00_AXI_BASEADDR, SERVOCONTROL_3_S00_AXI_SLV_REG11_OFFSET, dutyPWM);// plat3 servo-H duty
+    	}break;
+    	default:break;
+    }
+}
+
+
+double* Axisfunction(double array[])
+{
+	double arr_output[6];
+	double a, b, y, z;      // a代表杆子的长度，b代表杆子到幕布的距离,输入幕布上坐标的位置
+	double temp1, temp2, temp3, temp4, temp5, temp6;
+
+	a = *(array + 0);
+	b = *(array + 1);
+	z = *(array + 2);
+	y = *(array + 3);
+
+	z = 320 - z;
+	z = PPIdis*z;
+	y = 240 - y;
+	y = PPIdis*y;
+
+
+	if((z >= 0)&&(y >= 0)){  // region 1
+		temp1 = (0.75*a - fabs(z)) / sqrt(((0.5*a - fabs(z))*(0.5*a - fabs(z)) + b*b));   // servo-left H
+		temp2 = fabs(y) / sqrt(b*b + (0.5*a - fabs(z)) * (0.5*a - fabs(z)));              // servo-left V
+		temp3 = fabs(z) / sqrt(z*z + b*b);                                                // servo-middle H
+		temp4 = fabs(y) / sqrt(b*b + z*z);                                                // servo-middle V
+		temp5 = (fabs(z) + 0.5*a)/b;                                                      // servo-right H
+		temp6 = fabs(y) / sqrt(b*b + (0.5*a + fabs(z)) * (0.5*a + fabs(z)));              // servo-right V
+
+		arr_output[0] = (acos(temp1)/PI)*0.1+0.025; // transfer to pwm duty according to the servo angle
+		arr_output[1] = (atan(temp2)/PI)*0.1+0.025;
+
+		arr_output[2] = (acos(temp3)/PI)*0.1+0.025;
+		arr_output[3] = (acos(temp4)/PI)*0.1+0.025;
+
+		arr_output[4] = (atan(temp5)/PI)*0.1+0.025;
+		arr_output[5] = (asin(temp6)/PI)*0.1+0.025;
+	}
+	if((z < 0)&&(y >= 0)){  // region 2
+		temp1 = (fabs(z) + 0.5*a)/b;                                                      // servo-left H
+		temp2 = fabs(y) / sqrt(b*b + (0.5*a - fabs(z)) * (0.5*a - fabs(z)));              // servo-left V
+		temp3 = fabs(z) / sqrt(z*z + b*b);                                                // servo-middle H
+		temp4 = fabs(y) / sqrt(b*b + z*z);                                                // servo-middle V
+		temp5 = (0.75*a - fabs(z)) / sqrt(((0.5*a - fabs(z))*(0.5*a - fabs(z)) + b*b));   // servo-right H
+		temp6 = fabs(y) / sqrt(b*b + (0.5*a + fabs(z)) * (0.5*a + fabs(z)));              // servo-right V
+
+		arr_output[0] = (acos(temp1)/PI)*0.1+0.025; // transfer to pwm duty according to the servo angle
+		arr_output[1] = (atan(temp2)/PI)*0.1+0.025;
+
+		arr_output[2] = (acos(temp3)/PI)*0.1+0.025;
+		arr_output[3] = (acos(temp4)/PI)*0.1+0.025;
+
+		arr_output[4] = (atan(temp5)/PI)*0.1+0.025;
+		arr_output[5] = (asin(temp6)/PI)*0.1+0.025;
+	}
+
+	return arr_output;
+}
+
+

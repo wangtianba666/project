@@ -1,0 +1,8 @@
+15:59:59 **** Incremental Build of configuration Debug for project servo_pwm_test ****
+make pre-build main-build 
+a9-linaro-pre-build-step
+' '
+make: Nothing to be done for 'main-build'.
+
+16:00:00 Build Finished (took 1s.117ms)
+

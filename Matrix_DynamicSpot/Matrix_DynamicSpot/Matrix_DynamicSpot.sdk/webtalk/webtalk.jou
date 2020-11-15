@@ -1,0 +1,12 @@
+#-----------------------------------------------------------
+# Webtalk v2019.1 (64-bit)
+# SW Build 2644227 on Wed Sep  4 09:45:24 MDT 2019
+# 
+# Start of session at: Sat Nov 14 18:09:55 2020
+# Process ID: 16208
+# Current directory: C:/Users/dell/Desktop/Matrix_DynamicSpot/Matrix_DynamicSpot/Matrix_DynamicSpot.sdk/webtalk
+# Command line: wbtcv.exe -mode batch -source sdk_webtalk.tcl
+# Log file: C:/Users/dell/Desktop/Matrix_DynamicSpot/Matrix_DynamicSpot/Matrix_DynamicSpot.sdk/webtalk/webtalk.log
+# Journal file: C:/Users/dell/Desktop/Matrix_DynamicSpot/Matrix_DynamicSpot/Matrix_DynamicSpot.sdk/webtalk\webtalk.jou
+#-----------------------------------------------------------
+source sdk_webtalk.tcl
